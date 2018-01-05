@@ -5,7 +5,7 @@ import Scanner from './scanner'
 const rpcApi = 'https://mainnet.infura.io/Oxgvoj8dFruRa6YCekfU' // Mainnet
 
 async function run() {
-  const scanner = new Scanner(rpcApi, 4)
+  const scanner = new Scanner(rpcApi, 3)
 
   await scanner.init()
   //let res = await scanner.getBalance(
@@ -17,7 +17,7 @@ async function run() {
   //)
 
   //await scanner.processBlocks(147201, 147300)
-  await scanner.runSync(1000)
+  await scanner.runSync(10000)
   //checkTransactionCount(145011, 145012)
 }
 

@@ -38,7 +38,7 @@ export default class Scanner {
 
   runSync = async (nextBlocks: number) => {
     const latest = this.db.getLatestBlock()
-    return await this.processBlocks(latest, latest + nextBlocks)
+    return await this.processBlocks(latest + 1, latest + nextBlocks)
   }
 
   testTransaction = async (hash: string) => {
@@ -122,7 +122,7 @@ export default class Scanner {
             transaction.value
           )
           if (createTransactionResult) {
-            this.logger.log(
+            this.logger.debug(
               `Added transaction #${transaction.hash} from block [${
                 block.number
               }]`
@@ -165,7 +165,7 @@ export default class Scanner {
       )
       this.logger.warn(`Error blocks: [${errorBlocks.join(', ')}]`)
     } catch (err) {
-      this.logger.log('Promise processBlocks error', err)
+      this.logger.error('Promise processBlocks error', err)
     }
   }
 }

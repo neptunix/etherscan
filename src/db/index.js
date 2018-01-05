@@ -52,7 +52,12 @@ export default class DB {
       return true
       //this.logger.log(result)
     } catch (error) {
-      this.logger.error('Block create error', error.message)
+      this.logger.error(
+        `Block [${id}] create error: ${error.message} ${
+          error.original ? error.original.message : ''
+        }`,
+        error.message
+      )
       return false
     }
   }
@@ -64,11 +69,11 @@ export default class DB {
       if (result && result.length === 2) {
         if (result[1]) {
           // was created
-          this.logger.log(
+          this.logger.debug(
             `New account was created [${result[0].id}] ${result[0].account}`
           )
         } else {
-          this.logger.log(
+          this.logger.debug(
             `Found account [${result[0].id}] ${result[0].account}`
           )
         }
@@ -76,7 +81,12 @@ export default class DB {
       }
       return null
     } catch (error) {
-      this.logger.error('Account create error', error.message)
+      this.logger.error(
+        `Account [${account}] create error: ${error.message} ${
+          error.original ? error.original.message : ''
+        }`
+      )
+
       return null
     }
   }
@@ -106,7 +116,9 @@ export default class DB {
       //this.logger.log(result)
     } catch (error) {
       this.logger.error(
-        `Transaction [${transaction_hash}] create error: ${error.message}`
+        `Transaction [${transaction_hash}] create error: ${error.message} ${
+          error.original ? error.original.message : ''
+        }`
       )
       return false
     }

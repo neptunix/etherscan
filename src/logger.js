@@ -16,22 +16,32 @@ export default class Log {
   }
 
   error = (...args) => {
-    this.isError ? console.error(...args) : ''
+    if (this.isError) {
+      console.error(...args)
+    }
   }
 
   warn = (...args) => {
-    this.isWarn ? console.warn(...args) : ''
+    if (this.isWarn) {
+      console.warn(...args)
+    }
   }
 
   log = (...args) => {
-    this.isInfo ? console.log(...args) : ''
+    if (this.isInfo) {
+      console.log(...args)
+    }
   }
 
   debug = (...args) => {
-    this.isDebug ? console.debug(...args) : ''
+    if (this.isDebug) {
+      console.debug(...args)
+    }
   }
 
   trace = (...args) => {
-    this.isTrace ? console.trace(args) : ''
+    if (this.isTrace) {
+      console.trace(...args)
+    }
   }
 }
