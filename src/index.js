@@ -1,10 +1,12 @@
 // @flow
+import DB from './db'
+
 const rpcApi = 'https://mainnet.infura.io/Oxgvoj8dFruRa6YCekfU' // Mainnet
 
 const Web3 = require('web3')
 const web3 = new Web3(new Web3.providers.HttpProvider(rpcApi))
 
-function executeAllPromises(promises) {
+const executeAllPromises = (promises) => {
   // Wrap all Promises in a Promise that will always "resolve"
   var resolvingPromises = promises.map(function(promise) {
     return new Promise(function(resolve) {
@@ -64,8 +66,15 @@ async function checkTransactionCount(startBlockNumber, endBlockNumber) {
 
   try {
     const items = await executeAllPromises(blocks) //Promise.all(blocks)
-    for (let i = 0; i < items.results.length; i++) {
-      const block = items.results[i]
+    console.error(
+      items.errors
+        .map(function(error) {
+          return error.message
+        })
+        .join(',')
+    )
+
+    items.results.forEach(async (block) => {
       if (block != null) {
         if (block.transactions != null && block.transactions.length != 0) {
           console.log(
@@ -73,15 +82,50 @@ async function checkTransactionCount(startBlockNumber, endBlockNumber) {
               block.timestamp * 1000
             ).toString()} Transactions: ${block.transactions.length}`
           )
+          DB.createBlock(
+            block.number,
+            new Date(block.timestamp * 1000),
+            block.transactions.length
+          )
+          // Read transactions
+          if (block.transactions.length > 0) {
+            let transactions = []
+            block.transactions.forEach((transaction) => {
+              console.log(`Getting transaction info ${transaction}`)
+              transactions.push(web3.eth.getTransaction(transaction))
+            })
+            const transactItems = await executeAllPromises(transactions)
+            transactItems.results.forEach(async (transaction) => {
+              if (transaction === null) {
+                return
+              }
+              const from = await DB.createAccount(
+                web3.utils.hexToNumberString(transaction.from)
+              )
+              const to = await DB.createAccount(
+                web3.utils.hexToNumberString(transaction.to)
+              )
+              DB.createTransaction(
+                web3.utils.hexToNumberString(transaction.hash),
+                from.id,
+                to.id,
+                block.number,
+                transaction.value
+              )
+            })
+
+            console.error(
+              transactItems.errors
+                .map(function(error) {
+                  return error.message
+                })
+                .join(',')
+            )
+          }
           //console.log('Debug: ' + JSON.stringify(block))
         }
       }
-    }
-    var errors = items.errors
-      .map(function(error) {
-        return error.message
-      })
-      .join(',')
+    })
   } catch (err) {
     console.log('Promise error', err)
   }
@@ -95,7 +139,7 @@ async function run() {
     )}`
   )
 
-  checkTransactionCount(145000, 145005)
+  checkTransactionCount(145011, 145012)
 }
 
 run()

@@ -10,10 +10,16 @@ module.exports = (sequelize, DataTypes) => {
       date: {
         type: DataTypes.DATE,
         allowNull: false
+      },
+      transactions: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: '0'
       }
     },
     {
-      tableName: 'blocks'
+      tableName: 'blocks',
+      timestamps: false
     }
   )
 }
