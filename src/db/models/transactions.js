@@ -1,4 +1,6 @@
-module.exports = (sequelize, DataTypes) => {
+// @flow
+
+export default (sequelize, DataTypes) => {
   return sequelize.define(
     'transactions',
     {

@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import Sequelize from 'sequelize'
 
+const Op = Sequelize.Op
 const basename = path.basename(__filename)
 const env = process.env.NODE_ENV || 'development'
 const db = {}
@@ -13,7 +14,9 @@ const config = {
   database: 'etherscan',
   host: '127.0.0.1',
   port: 18401,
-  dialect: 'postgres'
+  dialect: 'postgres',
+  operatorsAliases: Op,
+  logging: false
 }
 
 const sequelize = new Sequelize(

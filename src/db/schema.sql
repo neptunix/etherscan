@@ -27,7 +27,7 @@ CREATE SEQUENCE transactions_id_seq;
 CREATE TABLE transactions
 (
     id bigint NOT NULL DEFAULT nextval('transactions_id_seq'),
-    transaction_hash numeric (78,0) NOT NULL,
+    transaction_hash numeric (80,0) NOT NULL,
     from_account bigint NOT NULL,
     to_account bigint NOT NULL,
     block_id int NOT NULL,

@@ -2,25 +2,21 @@
 
 export default (sequelize, DataTypes) => {
   return sequelize.define(
-    'blocks',
+    'settings',
     {
       id: {
         type: DataTypes.INTEGER,
         allowNull: false,
         primaryKey: true
       },
-      date: {
-        type: DataTypes.DATE,
-        allowNull: false
-      },
-      transactions: {
+      latest_block: {
         type: DataTypes.INTEGER,
         allowNull: false,
         defaultValue: '0'
       }
     },
     {
-      tableName: 'blocks',
+      tableName: 'settings',
       timestamps: false
     }
   )
