@@ -136,8 +136,7 @@ export default class Scanner {
       return 0
     } catch (err) {
       this.logger.error(
-        `Scanner[processBlock] blockNumber: ${blockNumber}`,
-        err
+        `Scanner[processBlock] [${blockNumber}]: ${err.message}`
       )
       return blockNumber
     }

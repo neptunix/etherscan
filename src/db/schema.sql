@@ -31,7 +31,7 @@ CREATE TABLE transactions
     from_account bigint NOT NULL,
     to_account bigint NOT NULL,
     block_id int NOT NULL,
-    wei numeric (20) NOT NULL,
+    wei numeric (24,0) NOT NULL,
     CONSTRAINT transactions_pk PRIMARY KEY (id)
 );
     CREATE UNIQUE INDEX transactions_idx_hash on transactions (transaction_hash ASC);

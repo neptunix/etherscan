@@ -26,17 +26,10 @@ const sequelize = new Sequelize(
   config
 )
 
-fs
-  .readdirSync(__dirname)
-  .filter((file) => {
-    return (
-      file.indexOf('.') !== 0 && file !== basename && file.slice(-3) === '.js'
-    )
-  })
-  .forEach((file) => {
-    const model = sequelize['import'](path.join(__dirname, file))
-    db[model.name] = model
-  })
+db.accounts = sequelize.import('accounts')
+db.blocks = sequelize.import('blocks')
+db.settings = sequelize.import('settings')
+db.transactions = sequelize.import('transactions')
 
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {
@@ -47,4 +40,10 @@ Object.keys(db).forEach((modelName) => {
 db.sequelize = sequelize
 db.Sequelize = Sequelize
 
-module.exports = db
+const accounts = db.accounts
+const blocks = db.blocks
+const settings = db.settings
+const transactions = db.transactions
+
+export default db
+export { accounts, blocks, settings, transactions }

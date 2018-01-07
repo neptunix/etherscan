@@ -1,10 +1,6 @@
 // @flow
 import Logger from '../logger'
-import models from './models'
-const blocks = models.blocks
-const accounts = models.accounts
-const transactions = models.transactions
-const settings = models.settings
+import { accounts, blocks, settings, transactions } from './models'
 
 export default class DB {
   logger: Logger

@@ -1,6 +1,7 @@
 // @flow
+import Sequelize from 'sequelize'
 
-export default (sequelize, DataTypes) => {
+export default (sequelize: Sequelize, DataTypes) => {
   return sequelize.define(
     'transactions',
     {

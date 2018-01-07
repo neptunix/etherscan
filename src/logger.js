@@ -15,31 +15,31 @@ export default class Log {
     this.isTrace = level > 4
   }
 
-  error = (...args) => {
+  error = (...args: Array<any>) => {
     if (this.isError) {
       console.error(...args)
     }
   }
 
-  warn = (...args) => {
+  warn = (...args: Array<any>) => {
     if (this.isWarn) {
       console.warn(...args)
     }
   }
 
-  log = (...args) => {
+  log = (...args: Array<any>) => {
     if (this.isInfo) {
       console.log(...args)
     }
   }
 
-  debug = (...args) => {
+  debug = (...args: Array<any>) => {
     if (this.isDebug) {
       console.debug(...args)
     }
   }
 
-  trace = (...args) => {
+  trace = (...args: Array<any>) => {
     if (this.isTrace) {
       console.trace(...args)
     }
