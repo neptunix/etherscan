@@ -2,6 +2,12 @@
 import Logger from '../logger'
 import { accounts, blocks, settings, transactions } from './models'
 
+export type DBResult = {
+  result: boolean,
+  message: string | null,
+  data: Object | null
+}
+
 export default class DB {
   logger: Logger
   settings: Object
@@ -27,7 +33,7 @@ export default class DB {
     return this
   }
 
-  updateSettings = async (params: Object) => {
+  updateSettings = async (params: Object): Promise<void> => {
     try {
       const newSettings = Object.assign({}, this.settings, params)
       await settings.update(newSettings, { where: { id: 1 } })
@@ -39,51 +45,50 @@ export default class DB {
 
   getLatestBlock = () => this.settings.latest_block
 
-  createBlock = async (id: number, date: Date, transactions: number) => {
+  createBlock = async (
+    id: number,
+    date: Date,
+    transactions: number
+  ): Promise<DBResult> => {
     try {
       const result = await blocks.create(
         { id, date, transactions },
         { returning: false }
       )
-      return true
-      //this.logger.log(result)
+      return { result: true, message: null, data: null }
     } catch (error) {
-      this.logger.error(
-        `Block [${id}] create error: ${error.message} ${
-          error.original ? error.original.message : ''
-        }`,
-        error.message
-      )
-      return false
+      const message = `Block [${id}] create error: ${error.message} ${
+        error.original ? error.original.message : ''
+      }`
+      return { result: false, message, data: null }
     }
   }
 
-  createAccount = async (account: string) => {
+  createAccount = async (account: string): Promise<DBResult> => {
     try {
       const result = await accounts.findOrCreate({ where: { account } })
 
       if (result && result.length === 2) {
+        let message
         if (result[1]) {
           // was created
-          this.logger.debug(
-            `New account was created [${result[0].id}] ${result[0].account}`
-          )
+          message = `New account was created [${result[0].id}] ${
+            result[0].account
+          }`
         } else {
-          this.logger.debug(
-            `Found account [${result[0].id}] ${result[0].account}`
-          )
+          message = `Found account [${result[0].id}] ${result[0].account}`
         }
-        return result[0]
+        return { result: true, message, data: result[0] }
       }
-      return null
+      return { result: false, message: null, data: null }
     } catch (error) {
-      this.logger.error(
-        `Account [${account}] create error: ${error.message} ${
+      return {
+        result: false,
+        message: `Account [${account}] create error: ${error.message} ${
           error.original ? error.original.message : ''
-        }`
-      )
-
-      return null
+        }`,
+        data: null
+      }
     }
   }
 
@@ -102,21 +107,21 @@ export default class DB {
     to_account: number,
     block_id: number,
     wei: number
-  ) => {
+  ): Promise<DBResult> => {
     try {
       const result = await transactions.create(
         { transaction_hash, from_account, to_account, block_id, wei },
         { returning: false }
       )
-      return true
-      //this.logger.log(result)
+      return { result: true, message: null, data: null }
     } catch (error) {
-      this.logger.error(
-        `Transaction [${transaction_hash}] create error: ${error.message} ${
-          error.original ? error.original.message : ''
-        }`
-      )
-      return false
+      return {
+        result: false,
+        message: `Transaction [${transaction_hash}] create error: ${
+          error.message
+        } ${error.original ? error.original.message : ''}`,
+        data: null
+      }
     }
   }
 }
