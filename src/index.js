@@ -11,7 +11,7 @@ async function run() {
   //let res = await scanner.getBalance(
   //  '0x32BE343B94F860124DC4FEE278FDCBD38C102D88'
   //)
-  console.log(await scanner.getBlock(1450000))
+  //console.log(await scanner.getBlock(1450000))
   //console.log('getbalance', res)
   //await scanner.testTransaction(
   //  '0x2385153b0d268f62ea44148f7d52f4fb1b664a047c854007b40b44d2bf89f44d'

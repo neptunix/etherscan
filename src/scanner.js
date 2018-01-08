@@ -7,7 +7,7 @@ import SyncQueue from './syncQueue'
 
 import { type Block, type BlockHeader, type Transaction } from './types'
 
-const maxFetchConnections = 20
+const maxFetchConnections = 3
 const maxQueueLength = 100
 
 export default class Scanner {
@@ -64,8 +64,8 @@ export default class Scanner {
   getBlock = async (block: number): Promise<Block | null> => {
     try {
       this.logger.debug(`Fetching Block ${block}`)
-      const blockResult = await this.web3.eth.getBlock(block)
-      this.logger.debug(`Block received`, blockResult)
+      await this.web3.eth.getBlock(block)
+      this.logger.debug(`Block received`, block)
       if (!blockResult || !blockResult.transactions) {
         this.logger.warn('Scanner[getBlock]: received empty block data')
         return null
@@ -110,7 +110,9 @@ export default class Scanner {
     let isStopping = false
 
     while (true) {
-      await sleep(5000)
+      console.debug(
+        `runSync loop. Blocks: ${this.synq.blocksLength()} transactions: ${this.synq.transactionsLength()}`
+      )
 
       if (currentBlock >= latestBlock + nextBlocks) {
         if (isStopping === false) {
@@ -135,6 +137,7 @@ export default class Scanner {
           this.addBlock(currentBlock++)
         }
       }
+      await sleep(1000, 'runSync')
     }
   }
 
@@ -142,8 +145,8 @@ export default class Scanner {
     this.logger.log('Starting download processor')
     while (true) {
       if (this.blocksLength() === 0 && this.transactionsLength() === 0) {
-        this.logger.debug('download processor: empty queue')
-        await sleep(5000)
+        this.logger.debug('Download processor: empty queue')
+        await sleep(1000, 'downloadProcessor')
         continue
       }
 
