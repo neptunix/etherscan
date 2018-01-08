@@ -152,6 +152,7 @@ export default class SyncQueue {
 
   addBlock = (block: Block) => {
     if (block !== null) {
+      this.logger.debug(`SynqQueue: Adding block ${block.number}`)
       this.blocksQueue.push({
         type: 'b',
         blockNumber: block.number,
@@ -169,6 +170,7 @@ export default class SyncQueue {
 
   addTransaction = (transaction: Transaction) => {
     if (transaction !== null) {
+      this.logger.debug(`SynqQueue: Adding transaction ${transaction.hash}`)
       this.transactionsQueue.push({
         type: 't',
         transaction,

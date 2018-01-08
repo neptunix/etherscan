@@ -7,8 +7,17 @@ import SyncQueue from './syncQueue'
 
 import { type Block, type BlockHeader, type Transaction } from './types'
 
-const maxFetchConnections = 3
+const maxFetchConnections = 10
 const maxQueueLength = 100
+const maxSyncQueueLength = 200
+
+type Response = {
+  type: 'b' | 't',
+  block?: null | Block,
+  blockNumber?: number,
+  transaction?: null | Transaction,
+  transactionHash?: string
+}
 
 export default class Scanner {
   api: string
@@ -61,41 +70,51 @@ export default class Scanner {
     }
   }
 
-  getBlock = async (block: number): Promise<Block | null> => {
+  getBlock = async (block: number): Promise<Response> => {
     try {
-      this.logger.debug(`Fetching Block ${block}`)
-      await this.web3.eth.getBlock(block)
-      this.logger.debug(`Block received`, block)
+      //this.logger.debug(`Fetching Block ${block}`)
+      this.currentConnections += 1
+      const blockResult = await this.web3.eth.getBlock(block)
+      //this.logger.debug(`Block received`, block)
       if (!blockResult || !blockResult.transactions) {
         this.logger.warn('Scanner[getBlock]: received empty block data')
-        return null
+        return { type: 'b', block: null, blockNumber: block }
       }
 
       blockResult.transactions.forEach((transaction) => {
         this.addTransaction(transaction)
       })
-      return blockResult
+      this.currentConnections -= 1
+      return { type: 'b', block: blockResult, blockNumber: block }
     } catch (err) {
       this.logger.warn('Scanner[getBlock]', err)
-      return null
+      this.currentConnections -= 1
+      return { type: 'b', block: null, blockNumber: block }
     }
   }
 
-  getTransaction = async (hash: string): Promise<Transaction | null> => {
+  getTransaction = async (hash: string): Promise<Response> => {
     try {
-      this.logger.debug(`Fetching Transaction ${hash}`)
+      //this.logger.debug(`Fetching Transaction ${hash}`)
+      this.currentConnections += 1
       const transactionResult = await this.web3.eth.getTransaction(hash)
-      this.logger.debug(`Transaction received`, transactionResult)
+      //this.logger.debug(`Transaction received`, transactionResult)
+      this.currentConnections -= 1
       if (!transactionResult) {
         this.logger.warn(
           'Scanner[getTransaction]: received empty transaction data'
         )
-        return null
+        return { type: 't', transaction: null, transactionHash: hash }
       }
-      return transactionResult
+      return {
+        type: 't',
+        transaction: transactionResult,
+        transactionHash: hash
+      }
     } catch (err) {
       this.logger.warn('Scanner[getTransaction]', err)
-      return null
+      this.currentConnections -= 1
+      return { type: 't', transaction: null, transactionHash: hash }
     }
   }
 
@@ -131,6 +150,17 @@ export default class Scanner {
           continue
         }
       }
+
+      // If SynqQueue is longer than expected, stop fetching blocks
+      if (
+        this.synq.blocksLength() + this.synq.transactionsLength() >
+        maxSyncQueueLength
+      ) {
+        console.log('Synq Queue is too long. Waiting...')
+        await sleep(2000)
+        continue
+      }
+
       const addToQueue = Math.min(maxQueueLength, currentBlock + nextBlocks)
       if (this.blocksLength() < addToQueue) {
         for (let b = this.blocksLength(); b < addToQueue; b++) {
@@ -150,54 +180,50 @@ export default class Scanner {
         continue
       }
 
+      let nextBlocks: Array<Promise<any>> = []
+      let nextTransactions: Array<Promise<any>> = []
+
       for (let i = this.currentConnections; i < maxFetchConnections; i++) {
         const nextBlock = this.nextBlock()
         if (nextBlock !== -1) {
-          this.getBlock(nextBlock)
-            .then((block) => {
-              this.currentConnections -= 1
-              if (block === null) {
-                // Error while downloading. Lets try again
-                this.addBlock(nextBlock)
-                return
-              }
-              // Nice block - add to db processing queue
-              this.synq.addBlock(block)
-            })
-            .catch((error) => {
-              this.currentConnections -= 1
-              this.logger.error(
-                `Download block: Should never get here ${error.message}`
-              )
-            })
-          this.currentConnections += 1
+          nextBlocks.push(this.getBlock(nextBlock))
           continue
         }
         const nextTransaction = this.nextTransaction()
-
         if (nextTransaction !== '') {
-          this.getTransaction(nextTransaction)
-            .then((transaction) => {
-              this.currentConnections -= 1
-              if (transaction === null) {
-                // Error while downloading. Lets try again
-                this.addTransaction(nextTransaction)
-                return
-              }
-              // Nice transaction - add to db processing queue
-              this.synq.addTransaction(transaction)
-            })
-            .catch((error) => {
-              this.currentConnections -= 1
-              this.logger.error(
-                `Download transaction: Should never get here ${error.message}`
-              )
-            })
-          this.currentConnections += 1
+          nextTransactions.push(this.getTransaction(nextTransaction))
           continue
         }
         break
       }
+
+      const combinedItems: Array<Promise<Block | Transaction>> = [
+        ...nextBlocks,
+        ...nextTransactions
+      ]
+
+      const items = await Promise.all(combinedItems)
+
+      items.forEach((item) => {
+        if (item.type === 'b') {
+          // Block
+          if (item.block === null) {
+            // Error while downloading. Lets try again
+            this.addBlock(item.blockNumber)
+            return
+          }
+          // Nice block - add to db processing queue
+          this.synq.addBlock(item.block)
+        } else {
+          if (item.transaction === null) {
+            // Error while downloading. Lets try again
+            this.addTransaction(item.transactionHash)
+            return
+          }
+          // Nice transaction - add to db processing queue
+          this.synq.addTransaction(item.transaction)
+        }
+      })
     }
   }
 
