@@ -7,9 +7,9 @@ import SyncQueue from './syncQueue'
 
 import { type Block, type BlockHeader, type Transaction } from './types'
 
-const maxFetchConnections = 10
-const maxQueueLength = 100
-const maxSyncQueueLength = 200
+const maxFetchConnections = 400
+const maxDownloadQueueLength = 3000
+const maxSyncQueueLength = 10000
 
 type Response = {
   type: 'b' | 't',
@@ -24,21 +24,23 @@ export default class Scanner {
   web3: Web3
   db: DB
   logger: Logger
-  synq: SyncQueue
+  sync: SyncQueue
   blocksQueue: Array<number>
   transactionsQueue: Array<string>
   currentConnections: number
+  downloadRunning: boolean
 
   constructor(apiUrl: string, logLevel: number) {
     this.logger = new Logger(logLevel)
     this.web3 = new Web3(new Web3.providers.HttpProvider(apiUrl))
     this.logger.log(`Creating new Web3 instance with URL ${apiUrl}`)
     this.db = new DB(logLevel)
-    this.synq = new SyncQueue(this.db, this.logger, this.web3)
+    this.sync = new SyncQueue(this.db, this.logger, this.web3)
 
     this.blocksQueue = []
     this.transactionsQueue = []
     this.currentConnections = 0
+    this.downloadRunning = false
   }
 
   init = async () => {
@@ -61,12 +63,14 @@ export default class Scanner {
   addBlock = (block: number) => {
     if (!this.blockExists(block)) {
       this.blocksQueue.push(block)
+      this.checkDownloadRunning()
     }
   }
 
   addTransaction = (transaction: string) => {
     if (!this.transactionExists(transaction)) {
       this.transactionsQueue.push(transaction)
+      this.checkDownloadRunning()
     }
   }
 
@@ -77,7 +81,9 @@ export default class Scanner {
       const blockResult = await this.web3.eth.getBlock(block)
       //this.logger.debug(`Block received`, block)
       if (!blockResult || !blockResult.transactions) {
-        this.logger.warn('Scanner[getBlock]: received empty block data')
+        this.logger.warn(
+          `Scanner[getBlock] [${block}]: received empty block data`
+        )
         return { type: 'b', block: null, blockNumber: block }
       }
 
@@ -87,7 +93,7 @@ export default class Scanner {
       this.currentConnections -= 1
       return { type: 'b', block: blockResult, blockNumber: block }
     } catch (err) {
-      this.logger.warn('Scanner[getBlock]', err)
+      //this.logger.warn('Scanner[getBlock] [block]', err.message)
       this.currentConnections -= 1
       return { type: 'b', block: null, blockNumber: block }
     }
@@ -102,7 +108,7 @@ export default class Scanner {
       this.currentConnections -= 1
       if (!transactionResult) {
         this.logger.warn(
-          'Scanner[getTransaction]: received empty transaction data'
+          `Scanner[getTransaction] [${hash}]: received empty transaction data`
         )
         return { type: 't', transaction: null, transactionHash: hash }
       }
@@ -112,7 +118,7 @@ export default class Scanner {
         transactionHash: hash
       }
     } catch (err) {
-      this.logger.warn('Scanner[getTransaction]', err)
+      //this.logger.warn(`Scanner[getTransaction] [${hash}]`, err.message)
       this.currentConnections -= 1
       return { type: 't', transaction: null, transactionHash: hash }
     }
@@ -122,63 +128,103 @@ export default class Scanner {
     const latestBlock = this.db.getLatestBlock()
 
     this.logger.log(
-      `Starting blocks synq for next ${nextBlocks} blocks. Latest blocks ${latestBlock}`
+      `Starting blocks sync for next ${nextBlocks} blocks. Latest block ${latestBlock}`
     )
 
     let currentBlock = latestBlock + 1
     let isStopping = false
 
     while (true) {
-      console.debug(
-        `runSync loop. Blocks: ${this.synq.blocksLength()} transactions: ${this.synq.transactionsLength()}`
+      this.logger.debug(
+        `Download queue => Connections: ${
+          this.currentConnections
+        }, Blocks: ${this.blocksLength()}, Transactions: ${this.transactionsLength()}`
       )
 
       if (currentBlock >= latestBlock + nextBlocks) {
         if (isStopping === false) {
-          console.log(
-            'Stopped blocks processing queue. Waiting for queue to empty'
+          this.logger.log(
+            'Stopped blocks processing queue. Waiting for sync queue to empty ...'
           )
           isStopping = true
         }
-        console.log(
-          `Scanner db queue. blocks: ${this.synq.blocksLength()} transactions: ${this.synq.transactionsLength()}`
+        this.logger.log(
+          `Scanner loop stopping... Waiting for sync queue to empty: Blocks/Transactions: [${this.sync.blocksLength()} / ${this.sync.transactionsLength()}]`
         )
         if (
-          this.synq.blocksLength() > 0 ||
-          this.synq.transactionsLength() > 0
+          this.sync.blocksLength() > 0 ||
+          this.sync.transactionsLength() > 0
         ) {
+          await sleep(1000)
           continue
         }
+        this.logger.log(
+          `Blocks processing complete. Stopped on block ${currentBlock}`
+        )
+        break
       }
 
-      // If SynqQueue is longer than expected, stop fetching blocks
-      if (
-        this.synq.blocksLength() + this.synq.transactionsLength() >
-        maxSyncQueueLength
-      ) {
-        console.log('Synq Queue is too long. Waiting...')
-        await sleep(2000)
-        continue
-      }
-
-      const addToQueue = Math.min(maxQueueLength, currentBlock + nextBlocks)
-      if (this.blocksLength() < addToQueue) {
-        for (let b = this.blocksLength(); b < addToQueue; b++) {
+      const addToQueue = Math.min(
+        maxDownloadQueueLength,
+        currentBlock + nextBlocks
+      )
+      const currentTasks = this.blocksLength() + this.transactionsLength()
+      if (currentTasks < addToQueue) {
+        for (let b = currentTasks; b < addToQueue; b++) {
           this.addBlock(currentBlock++)
         }
       }
-      await sleep(1000, 'runSync')
+      await sleep(1000)
+    }
+  }
+
+  checkDownloadRunning = () => {
+    if (!this.downloadRunning) {
+      this.downloadProcessor()
     }
   }
 
   downloadProcessor = async () => {
-    this.logger.log('Starting download processor')
+    if (this.downloadRunning) {
+      return
+    }
+    this.downloadRunning = true
+    //this.logger.log('Starting download processor')
+    const t1 = process.hrtime()
+
+    let totalBlocks = 0
+    let totalTransactions = 0
+
     while (true) {
       if (this.blocksLength() === 0 && this.transactionsLength() === 0) {
-        this.logger.debug('Download processor: empty queue')
-        await sleep(1000, 'downloadProcessor')
+        const t2 = process.hrtime(t1)
+        const diff = (t2[0] * 1e9 + t2[1]) / 1e6
+        console.log(
+          `
+  Download Queue is empty. Time ${diff}ms (B+T/sec: ${totalBlocks +
+            totalTransactions /
+              diff *
+              1000}) Total blocks/trans: ${totalBlocks}/${totalTransactions}
+          `
+        )
+        break
+      }
+
+      // If SyncQueue is longer than expected, stop fetching blocks
+      if (
+        this.sync.blocksLength() + this.sync.transactionsLength() >
+        maxSyncQueueLength
+      ) {
+        console.log(
+          `Sync Queue is too long [${this.sync.blocksLength()}, ${this.sync.transactionsLength()}]. Not fetching new blocks`
+        )
+        await sleep(1000)
         continue
       }
+
+      console.log(
+        `DownloadQueue length => blocks: ${this.blocksLength()}, transactions: ${this.transactionsLength()}`
+      )
 
       let nextBlocks: Array<Promise<any>> = []
       let nextTransactions: Array<Promise<any>> = []
@@ -213,7 +259,8 @@ export default class Scanner {
             return
           }
           // Nice block - add to db processing queue
-          this.synq.addBlock(item.block)
+          this.sync.addBlock(item.block)
+          totalBlocks += 1
         } else {
           if (item.transaction === null) {
             // Error while downloading. Lets try again
@@ -221,10 +268,13 @@ export default class Scanner {
             return
           }
           // Nice transaction - add to db processing queue
-          this.synq.addTransaction(item.transaction)
+          this.sync.addTransaction(item.transaction)
+          totalTransactions += 1
         }
       })
+      await sleep(500)
     }
+    this.downloadRunning = false
   }
 
   // Useful methods

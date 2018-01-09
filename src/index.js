@@ -21,8 +21,7 @@ async function run() {
   //await scanner.runSync(1000)
   //checkTransactionCount(145011, 145012)
 
-  scanner.downloadProcessor()
-  await scanner.runSync(1000)
+  await scanner.runSync(500000)
 }
 
 run()

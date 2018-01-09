@@ -47,11 +47,11 @@ export const count = (array: Array<any>, value: any) =>
   array.filter((v) => v === value).length
 
 export const sleep = (time: number, reason?: string = ''): Promise<void> => {
-  console.log(`Sleeping ${time} seconds: ${reason}`)
+  //console.log(`Sleeping ${time} seconds: ${reason}`)
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       clearTimeout(timer)
-      console.log(`Done sleeping ${time} for ${reason}`)
+      //console.log(`Done sleeping ${time} for ${reason}`)
       resolve()
     }, time)
   })

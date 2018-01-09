@@ -46,41 +46,61 @@ export default class SyncQueue {
   latestBlock: number
   failedBlocks: number
   failedTransactions: number
+  totalBlocks: number
+  totalTransactions: number
 
   constructor(db: DB, logger: Logger, web3: Web3) {
     this.db = db
-    this.dbhelper = new DbHelper(db, logger)
+    this.dbhelper = new DbHelper(db, logger, web3)
     this.logger = logger
     this.web3 = web3
     this.blocksQueue = []
     this.transactionsQueue = []
     this.running = false
-    this.maxConnections = 10
+    this.maxConnections = 400
     this.currentConnections = 0
     this.latestBlock = 0
+
     this.failedBlocks = 0
     this.failedTransactions = 0
+    this.totalBlocks = 0
+    this.totalTransactions = 0
   }
 
   start = async () => {
-    console.log(`Started SyncQueue`)
+    if (this.running) {
+      return
+    }
+    //    console.log(`Restarting SyncQueue ... `)
+    this.failedBlocks = 0
+    this.failedTransactions = 0
+    this.totalBlocks = 0
+    this.totalTransactions = 0
+
+    const t1 = process.hrtime()
     this.running = true
 
-    while (this.running) {
+    while (true) {
       if (this.transactionsLength() === 0 && this.blocksLength() === 0) {
+        const t2 = process.hrtime(t1)
+        const diff = (t2[0] * 1e9 + t2[1]) / 1e6
         console.log(
-          `SyncQueue stopped. Queue is empty. Latest block: ${
-            this.latestBlock
-          }. Failed blocks ${this.failedBlocks}. Failed transactions ${
-            this.failedTransactions
-          }`
+          `
+  DB SyncQueue is empty. Latest block: ${
+    this.latestBlock
+  }. Time ${diff}ms (B+T/sec: ${this.totalBlocks +
+            this.totalTransactions / diff * 1000}) Total blocks/trans: ${
+            this.totalBlocks
+          }/${this.totalTransactions}. Failed blocks/trans ${
+            this.failedBlocks
+          }/${this.failedTransactions}
+          `
         )
         await this.db.updateSettings({ latest_block: this.latestBlock })
-        this.running = false
+
         break
       }
 
-      await sleep(1000)
       console.log(
         `SyncQueue length => blocks: ${this.blocksLength()}, transactions: ${this.transactionsLength()}`
       )
@@ -125,6 +145,7 @@ export default class SyncQueue {
               }
               return
             }
+            this.totalBlocks += 1
             if (item.blockNumber > this.latestBlock) {
               this.latestBlock = item.blockNumber
             }
@@ -139,11 +160,20 @@ export default class SyncQueue {
               }
               return
             }
+            this.totalTransactions += 1
           }
         })
       } catch (err) {
         this.logger.error('Promise processBlocks error', err)
       }
+      //await sleep(1000)
+    }
+    this.running = false
+  }
+
+  checkRunning = () => {
+    if (!this.running) {
+      this.start()
     }
   }
 
@@ -152,25 +182,27 @@ export default class SyncQueue {
 
   addBlock = (block: Block) => {
     if (block !== null) {
-      this.logger.debug(`SynqQueue: Adding block ${block.number}`)
+      //this.logger.debug(`SyncQueue: Adding block ${block.number}`)
       this.blocksQueue.push({
         type: 'b',
         blockNumber: block.number,
         block: block,
         retryCount: 0
       })
+      this.checkRunning()
     }
   }
 
   addBlockData = (blockData: BlockData) => {
     if (blockData !== null) {
       this.blocksQueue.push(blockData)
+      this.checkRunning()
     }
   }
 
   addTransaction = (transaction: Transaction) => {
     if (transaction !== null) {
-      this.logger.debug(`SynqQueue: Adding transaction ${transaction.hash}`)
+      //this.logger.debug(`SyncQueue: Adding transaction ${transaction.hash}`)
       this.transactionsQueue.push({
         type: 't',
         transaction,
@@ -178,12 +210,14 @@ export default class SyncQueue {
         to: -1,
         retryCount: 0
       })
+      this.checkRunning()
     }
   }
 
   addTransactionData = (transactionData: TransactionData) => {
     if (transactionData !== null) {
       this.transactionsQueue.push(transactionData)
+      this.checkRunning()
     }
   }
 
@@ -203,6 +237,7 @@ class DbHelper {
   web3: Web3
   constructor(db: DB, logger: Logger, web3: Web3) {
     this.db = db
+    this.web3 = web3
     this.logger = logger
   }
   createBlock = async (blockData: BlockData): Promise<CreateBlockResult> => {
