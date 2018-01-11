@@ -4,12 +4,14 @@ import Web3 from 'web3'
 import { type Block, type BlockHeader, type Transaction } from './types'
 import { sleep } from './utils'
 import DB from './db'
+import AccountsHelper from './db/accountsHelper'
 import Logger from './logger'
 
 const maxRetryCount = 3
 
 type TransactionData = {
   transaction: Transaction,
+  blockNumber: number,
   from: number,
   to: number,
   retryCount: number
@@ -34,6 +36,7 @@ type CreateTransactionResult = {
 }
 
 export default class SyncQueue {
+  accountsHelper: AccountsHelper
   db: DB
   dbhelper: DbHelper
   logger: Logger
@@ -42,24 +45,29 @@ export default class SyncQueue {
   transactionsQueue: Array<TransactionData>
   running: boolean
   maxConnections: number
+  maxBulkItems: number
   currentConnections: number
   latestBlock: number
   failedBlocks: number
   failedTransactions: number
   totalBlocks: number
   totalTransactions: number
+  maxBulkConnections: number
 
   constructor(db: DB, logger: Logger, web3: Web3) {
     this.db = db
-    this.dbhelper = new DbHelper(db, logger, web3)
+    this.accountsHelper = new AccountsHelper()
+    this.dbhelper = new DbHelper(db, logger, web3, this.accountsHelper)
     this.logger = logger
     this.web3 = web3
     this.blocksQueue = []
     this.transactionsQueue = []
     this.running = false
-    this.maxConnections = 400
+    this.maxConnections = 500
+    this.maxBulkItems = 1000
     this.currentConnections = 0
     this.latestBlock = 0
+    this.maxBulkConnections = 2
 
     this.failedBlocks = 0
     this.failedTransactions = 0
@@ -83,39 +91,146 @@ export default class SyncQueue {
     while (true) {
       if (this.transactionsLength() === 0 && this.blocksLength() === 0) {
         const t2 = process.hrtime(t1)
-        const diff = (t2[0] * 1e9 + t2[1]) / 1e6
+        const ms = parseInt((t2[0] * 1e9 + t2[1]) / 1e6)
+        const sec = parseInt(ms / 1000)
+        const blPerSec = parseInt(this.totalBlocks / ms * 1000)
+        const trPerSec = parseInt(this.totalTransactions / ms * 1000)
+
         console.log(
           `
   DB SyncQueue is empty. Latest block: ${
     this.latestBlock
-  }. Time ${diff}ms (B+T/sec: ${this.totalBlocks +
-            this.totalTransactions / diff * 1000}) Total blocks/trans: ${
+  }. Time ${sec} sec (B/sec: ${blPerSec}, T/sec: ${trPerSec}) Total blocks/trans: ${
             this.totalBlocks
           }/${this.totalTransactions}. Failed blocks/trans ${
             this.failedBlocks
-          }/${this.failedTransactions}
-          `
+          }/${this.failedTransactions}, Connections limit: ${
+            this.maxConnections
+          }. Account cache length: ${this.dbhelper
+            .accountsHelperLength()
+            .toString()}
+           `
         )
         await this.db.updateSettings({ latest_block: this.latestBlock })
-
         break
       }
 
-      console.log(
-        `SyncQueue length => blocks: ${this.blocksLength()}, transactions: ${this.transactionsLength()}`
-      )
+      const t2 = process.hrtime(t1)
+      const ms = parseInt((t2[0] * 1e9 + t2[1]) / 1e6)
+      const blPerSec = ms > 0 ? parseInt(this.totalBlocks / ms * 1000) : 0
+      const trPerSec = ms > 0 ? parseInt(this.totalTransactions / ms * 1000) : 0
 
+      console.log(
+        `Sync queue\t=> Speed: [${blPerSec}/${trPerSec}], Blocks: ${this.blocksLength()}, Transactions: ${this.transactionsLength()}, Connections: ${
+          this.currentConnections
+        }, Accounts cache: ${this.dbhelper.accountsHelperLength().toString()}`
+      )
+      try {
+        let nextBlocks: Array<BlockData> = []
+
+        if (
+          this.currentConnections < this.maxBulkConnections &&
+          this.blocksLength() > 0
+        ) {
+          let maxBlock = 0
+          for (
+            let i = 0;
+            i < Math.min(this.maxBulkItems, this.blocksLength());
+            i++
+          ) {
+            const next = this.nextBlock()
+            if (next) {
+              nextBlocks.push(next)
+            }
+          }
+          this.currentConnections += 1
+          this.dbhelper
+            .bulkCreateBlocks(nextBlocks)
+            .then((result) => {
+              this.currentConnections -= 1
+              this.totalBlocks += nextBlocks.length
+              const maxBlock = Math.max(
+                ...nextBlocks.map((n) => n.block.number)
+              )
+              if (maxBlock > this.latestBlock) {
+                this.latestBlock = maxBlock
+              }
+              /*this.logger.log(
+              `Bulk created ${nextBlocks.length} blocks. Latest: ${
+                this.latestBlock
+              }`
+            )*/
+            })
+            .catch((error) => {
+              this.logger.error(`sync bulkCreateBlocks error, ${error.message}`)
+            })
+        }
+
+        let nextTransactions: Array<TransactionData> = []
+
+        if (
+          this.currentConnections < this.maxBulkConnections &&
+          this.transactionsLength() > 0
+        ) {
+          for (
+            let i = 0;
+            i < Math.min(this.maxBulkItems, this.transactionsLength());
+            i++
+          ) {
+            const next = this.nextTransaction(this.latestBlock)
+            if (next) {
+              // Process accounts
+              if (next.to === -1) {
+                const toNum = this.accountToNum(next.transaction.to)
+                let to = this.accountsHelper.get(toNum)
+                if (!to) {
+                  to = await this.dbhelper.createAccount(toNum)
+                }
+                next.to = to
+              }
+              if (next.from === -1) {
+                const fromNum = this.accountToNum(next.transaction.from)
+                let from = this.accountsHelper.get(fromNum)
+                if (!from) {
+                  from = await this.dbhelper.createAccount(fromNum)
+                }
+                next.from = from
+              }
+              nextTransactions.push(next)
+            }
+          }
+          if (nextTransactions.length > 0) {
+            this.currentConnections += 1
+            this.dbhelper
+              .bulkCreateTransactions(nextTransactions)
+              .then((result) => {
+                this.currentConnections -= 1
+                this.totalTransactions += nextTransactions.length
+                this.logger.log(
+                  `Bulk created ${nextTransactions.length} transactions`
+                )
+              })
+              .catch((error) => {
+                this.logger.error(
+                  `sync bulkCreateTransactions error, ${error.message}`
+                )
+              })
+          }
+        }
+        /*
       let nextBlocks: Array<Promise<CreateBlockResult>> = []
       let nextTransactions: Array<Promise<CreateTransactionResult>> = []
 
       for (let i = this.currentConnections; i < this.maxConnections; i++) {
         const nextBlock = this.nextBlock()
         if (nextBlock !== null) {
+          this.currentConnections += 1
           nextBlocks.push(this.dbhelper.createBlock(nextBlock))
           continue
         }
-        const nextTransaction = this.nextTransaction()
+        const nextTransaction = this.nextTransaction(this.latestBlock)
         if (nextTransaction !== null) {
+          this.currentConnections += 1
           nextTransactions.push(
             this.dbhelper.createTransaction(nextTransaction)
           )
@@ -125,6 +240,59 @@ export default class SyncQueue {
       }
 
       try {
+        nextBlocks.forEach((block) => {
+          block
+            .then((item) => {
+              // Block
+              this.currentConnections -= 1
+              if (!item.result && item.blockData !== null) {
+                if (item.blockData.retryCount < maxRetryCount) {
+                  // Block processing error. Will try again
+                  this.logger.debug(
+                    `Retrying block ${item.blockNumber}. RetryCount: ${
+                      item.blockData.retryCount
+                    }`
+                  )
+                  this.addBlockData(item.blockData)
+                } else {
+                  this.failedBlocks += 1
+                }
+                return
+              }
+              this.totalBlocks += 1
+              if (item.blockNumber > this.latestBlock) {
+                this.latestBlock = item.blockNumber
+              }
+            })
+            .catch((error) => {
+              // Block processing error. Will try again
+              this.logger.error(`sync block error ${error.message}`)
+            })
+        })
+
+        nextTransactions.forEach((transaction) => {
+          transaction
+            .then((item) => {
+              // Transaction
+              this.currentConnections -= 1
+              if (!item.result && item.transactionData) {
+                if (item.transactionData.retryCount < maxRetryCount) {
+                  // Transaction processing error. Will try again
+                  this.addTransactionData(item.transactionData)
+                } else {
+                  this.failedTransactions += 1
+                }
+                return
+              }
+              this.totalTransactions += 1
+            })
+            .catch((error) => {
+              // Block processing error. Will try again
+              this.logger.error(`sync block error ${error.message}`)
+            })
+        })
+*/
+        /*
         const combinedItems: Array<
           Promise<CreateBlockResult | CreateTransactionResult>
         > = [...nextBlocks, ...nextTransactions]
@@ -134,6 +302,7 @@ export default class SyncQueue {
 
         // Process results
         items.forEach((item) => {
+          this.currentConnections -= 1
           if (item.type === 'b') {
             // Block
             if (!item.result && item.blockData) {
@@ -163,10 +332,12 @@ export default class SyncQueue {
             this.totalTransactions += 1
           }
         })
+      } */
       } catch (err) {
         this.logger.error('Promise processBlocks error', err)
       }
-      //await sleep(1000)
+
+      await sleep(500)
     }
     this.running = false
   }
@@ -206,6 +377,7 @@ export default class SyncQueue {
       this.transactionsQueue.push({
         type: 't',
         transaction,
+        blockNumber: transaction.blockNumber,
         from: -1,
         to: -1,
         retryCount: 0
@@ -227,19 +399,104 @@ export default class SyncQueue {
 
   nextBlock = (): BlockData | null =>
     this.blocksLength() > 0 ? this.blocksQueue.shift() : null
-  nextTransaction = (): TransactionData | null =>
-    this.transactionsLength() > 0 ? this.transactionsQueue.shift() : null
+  nextTransaction = (blockNumber: number): TransactionData | null => {
+    if (this.transactionsLength() === 0) {
+      return null
+    }
+    const next = this.transactionsQueue.find(
+      (t) => t.blockNumber <= blockNumber
+    )
+    return !!next ? next : null
+  }
+
+  accountToNum = (hash: string | null) => {
+    if (hash === null) {
+      hash = '0x00'
+    }
+    // transaction.to is null for Smart Contract creation. TODO: should call getTransactionReceipt to get contract hash
+    return this.web3.utils.hexToNumberString(hash)
+  }
 }
 
 class DbHelper {
   db: DB
   logger: Logger
   web3: Web3
-  constructor(db: DB, logger: Logger, web3: Web3) {
+  accountsHelper: AccountsHelper
+
+  constructor(db: DB, logger: Logger, web3: Web3, accountsHelper) {
     this.db = db
     this.web3 = web3
     this.logger = logger
+    this.accountsHelper = accountsHelper
   }
+
+  accountsHelperLength = () => this.accountsHelper.length()
+
+  bulkCreateBlocks = async (blocks: Array<BlockData>) => {
+    try {
+      const blockData = blocks.map((blockData) => {
+        return {
+          id: blockData.block.number,
+          date: new Date(blockData.block.timestamp * 1000),
+          transactions: blockData.block.transactions.length
+        }
+      })
+      const createResult = await this.db.bulkCreateBlocks(blockData)
+      if (!createResult.result) {
+        this.logger.error(
+          `bulkCreateBlocks error ${
+            createResult.message ? createResult.message : ''
+          }`
+        )
+      }
+      return createResult
+    } catch (error) {
+      this.logger.error(`bulkCreateBlocks error ${error.message}`)
+    }
+  }
+
+  bulkCreateTransactions = async (transactions: Array<TransactionData>) => {
+    try {
+      // { transaction_hash, from_account, to_account, block_id, wei },
+      const transactionData = transactions.map((transactionData) => {
+        return {
+          transaction_hash: this.web3.utils.hexToNumberString(
+            transactionData.transaction.hash
+          ),
+          from_account: transactionData.from,
+          to_account: transactionData.to,
+          block_id: transactionData.blockNumber,
+          wei: transactionData.transaction.value
+        }
+      })
+      const createResult = await this.db.bulkCreateTransactions(transactionData)
+      if (!createResult.result) {
+        this.logger.error(
+          `bulkCreateTransactions error ${
+            createResult.message ? createResult.message : ''
+          }`
+        )
+        return createResult
+      }
+    } catch (error) {
+      this.logger.error(`bulkCreateTransactions error ${error.message}`)
+    }
+  }
+
+  createAccount = async (accountNum): Promise<number> => {
+    let id = -1
+    const result = await this.db.createAccount(accountNum)
+    if (!result.result) {
+      this.logger.error(result.message)
+    }
+    if (result.data !== null && result.data.id > 0) {
+      id = result.data.id
+      this.accountsHelper.set(accountNum, id)
+    }
+    return id
+  }
+
   createBlock = async (blockData: BlockData): Promise<CreateBlockResult> => {
     const createResult = await this.db.createBlock(
       blockData.block.number,
@@ -268,43 +525,64 @@ class DbHelper {
     let from = transactionData.from
     let to = transactionData.to
 
-    // Создаем или вытаскиваем данные аккаунта из базы (from)
-    if (transactionData.from === -1) {
-      const fromResult = await this.db.createAccount(
-        this.web3.utils.hexToNumberString(transactionData.transaction.from)
-      )
-      if (!fromResult.result) {
-        this.logger.error(fromResult.message)
-        return {
-          result: false,
-          type: 't',
-          transactionData
+    const fromId = this.accountsHelper.get(transactionData.transaction.from)
+    if (fromId) {
+      from = fromId
+    } else {
+      // Создаем или вытаскиваем данные аккаунта из базы (from)
+      if (transactionData.from === -1) {
+        const fromResult = await this.db.createAccount(
+          this.web3.utils.hexToNumberString(transactionData.transaction.from)
+        )
+        if (!fromResult.result) {
+          this.logger.error(fromResult.message)
+          return {
+            result: false,
+            type: 't',
+            transactionData
+          }
         }
-      }
-      if (fromResult.data !== null && fromResult.data.id > 0) {
-        from = fromResult.data.id
+        if (fromResult.data !== null && fromResult.data.id > 0) {
+          from = fromResult.data.id
+          this.accountsHelper.set(transactionData.transaction.from, from)
+        }
       }
     }
 
-    // Создаем или вытаскиваем данные аккаунта из базы (to)
-    if (transactionData.to === -1) {
-      const toResult = await this.db.createAccount(
-        this.web3.utils.hexToNumberString(
-          transactionData.transaction.to === null
-            ? '0x00' // transaction.to is null for Smart Contract creation. TODO: should call getTransactionReceipt to get contract hash
-            : transactionData.transaction.to
+    const toId = this.accountsHelper.get(
+      transactionData.transaction.to === null
+        ? '0x00'
+        : transactionData.transaction.to
+    )
+    if (toId) {
+      to = toId
+    } else {
+      // Создаем или вытаскиваем данные аккаунта из базы (to)
+      if (transactionData.to === -1) {
+        const toResult = await this.db.createAccount(
+          this.web3.utils.hexToNumberString(
+            transactionData.transaction.to === null
+              ? '0x00' // transaction.to is null for Smart Contract creation. TODO: should call getTransactionReceipt to get contract hash
+              : transactionData.transaction.to
+          )
         )
-      )
-      if (!toResult.result) {
-        this.logger.error(toResult.message)
-        return {
-          result: false,
-          type: 't',
-          transactionData
+        if (!toResult.result) {
+          this.logger.error(toResult.message)
+          return {
+            result: false,
+            type: 't',
+            transactionData
+          }
         }
-      }
-      if (toResult.data !== null && toResult.data.id > 0) {
-        to = toResult.data.id
+        if (toResult.data !== null && toResult.data.id > 0) {
+          to = toResult.data.id
+          this.accountsHelper.set(
+            transactionData.transaction.to === null
+              ? '0x00'
+              : transactionData.transaction.to,
+            to
+          )
+        }
       }
     }
 
@@ -324,6 +602,7 @@ class DbHelper {
       transactionData: createResult.result
         ? null
         : {
+            blockNumber: transactionData.blockNumber,
             transaction: transactionData.transaction,
             from: from,
             to: to,

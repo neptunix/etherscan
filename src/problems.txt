@@ -1,0 +1,9 @@
+* Problems
+
+Transaction [70790413729833240098199694257509812383595264568579763815780837134096392054996] create error: numeric field overflow numeric field overflow
+Transaction [70790413729833240098199694257509812383595264568579763815780837134096392054996] create error: numeric field overflow numeric field overflow
+// Странный идентификатор транзакции пришел - слишком длинный - было 1 раз
+
+[DONE ]* транзакции вообще не обрабатываются, пока есть новые блоки (а они есть всегда!)
+* latest_block сбрасывается в 0 при ошибке Block [104210] create error: Validation error duplicate key value violates unique constraint "blocks_pk"
+

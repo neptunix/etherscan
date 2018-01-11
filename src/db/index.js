@@ -1,6 +1,7 @@
 // @flow
 import Logger from '../logger'
 import { accounts, blocks, settings, transactions } from './models'
+import { type Block, type BlockHeader, type Transaction } from '../types'
 
 export type DBResult = {
   result: boolean,
@@ -44,6 +45,38 @@ export default class DB {
   }
 
   getLatestBlock = () => this.settings.latest_block
+
+  bulkCreateBlocks = async (data: Array<Block>): Promise<DBResult> => {
+    try {
+      const result = await blocks.bulkCreate(data, { returning: false })
+      return { result: true, message: null, data: null }
+    } catch (error) {
+      const message = `BulkCreateBlock error [Blocks: ${data
+        .map((item) => item.number)
+        .join(', ')}]: ${error.message} ${
+        error.original ? error.original.message : ''
+      }`
+      return { result: false, message, data: null }
+    }
+  }
+
+  bulkCreateTransactions = async (
+    data: Array<Transaction>
+  ): Promise<DBResult> => {
+    try {
+      const result = await transactions.bulkCreate(data, {
+        returning: false
+      })
+      return { result: true, message: null, data: null }
+    } catch (error) {
+      const message = `BulkCreateTransaction error [TX: ${data
+        .map((item) => item.hash)
+        .join(', ')}]: ${error.message} ${
+        error.original ? error.original.message : ''
+      }`
+      return { result: false, message, data: null }
+    }
+  }
 
   createBlock = async (
     id: number,

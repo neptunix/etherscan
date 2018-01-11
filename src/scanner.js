@@ -7,9 +7,9 @@ import SyncQueue from './syncQueue'
 
 import { type Block, type BlockHeader, type Transaction } from './types'
 
-const maxFetchConnections = 400
-const maxDownloadQueueLength = 3000
-const maxSyncQueueLength = 10000
+const maxFetchConnections = 1
+const maxDownloadQueueLength = 10
+const maxSyncQueueLength = 20
 
 type Response = {
   type: 'b' | 't',
@@ -29,6 +29,8 @@ export default class Scanner {
   transactionsQueue: Array<string>
   currentConnections: number
   downloadRunning: boolean
+  blocksDownloaded: number
+  transactionsDownloaded: number
 
   constructor(apiUrl: string, logLevel: number) {
     this.logger = new Logger(logLevel)
@@ -41,6 +43,8 @@ export default class Scanner {
     this.transactionsQueue = []
     this.currentConnections = 0
     this.downloadRunning = false
+    this.blocksDownloaded = 0
+    this.transactionsDownloaded = 0
   }
 
   init = async () => {
@@ -126,6 +130,9 @@ export default class Scanner {
 
   runSync = async (nextBlocks: number) => {
     const latestBlock = this.db.getLatestBlock()
+    this.blocksDownloaded = 0
+    this.transactionsDownloaded = 0
+    const t1 = process.hrtime()
 
     this.logger.log(
       `Starting blocks sync for next ${nextBlocks} blocks. Latest block ${latestBlock}`
@@ -135,31 +142,45 @@ export default class Scanner {
     let isStopping = false
 
     while (true) {
-      this.logger.debug(
-        `Download queue => Connections: ${
-          this.currentConnections
-        }, Blocks: ${this.blocksLength()}, Transactions: ${this.transactionsLength()}`
-      )
+      const t2 = process.hrtime(t1)
+      const ms = parseInt((t2[0] * 1e9 + t2[1]) / 1e6)
+      const sec = parseInt(ms / 1000)
+      const blPerSec = ms > 0 ? parseInt(this.blocksDownloaded / ms * 1000) : 0
+      const trPerSec =
+        ms > 0 ? parseInt(this.transactionsDownloaded / ms * 1000) : 0
+
+      if (this.downloadRunning) {
+        this.logger.debug(
+          `Download queue\t=> Speed: [${blPerSec}/${trPerSec}], Blocks: ${this.blocksLength()}, Transactions: ${this.transactionsLength()}, Connections: ${
+            this.currentConnections
+          }, Left blocks: ${latestBlock + nextBlocks - currentBlock}`
+        )
+      }
 
       if (currentBlock >= latestBlock + nextBlocks) {
         if (isStopping === false) {
           this.logger.log(
-            'Stopped blocks processing queue. Waiting for sync queue to empty ...'
+            `Scanner loop stopping... Waiting for sync queue to empty: Blocks/Transactions: [${this.sync.blocksLength()} / ${this.sync.transactionsLength()}]`
           )
           isStopping = true
         }
-        this.logger.log(
-          `Scanner loop stopping... Waiting for sync queue to empty: Blocks/Transactions: [${this.sync.blocksLength()} / ${this.sync.transactionsLength()}]`
-        )
+
         if (
           this.sync.blocksLength() > 0 ||
-          this.sync.transactionsLength() > 0
+          this.sync.transactionsLength() > 0 ||
+          this.blocksLength() > 0 ||
+          this.transactionsLength() > 0
         ) {
-          await sleep(1000)
+          await sleep(2000)
           continue
         }
         this.logger.log(
-          `Blocks processing complete. Stopped on block ${currentBlock}`
+          `
+  Blocks processing complete. Stopped on block ${currentBlock}.  Time: ${sec /
+            60} minutes. Download Speed: [${blPerSec}/${trPerSec}] Blocks/Transactions per second. Processed blocks: ${
+            this.blocksDownloaded
+          } and transactions: ${this.transactionsDownloaded}
+  [Fetch connections: ${maxFetchConnections}, Download Queue Length: ${maxDownloadQueueLength}, Sync Queue Length: ${maxSyncQueueLength}]`
         )
         break
       }
@@ -198,13 +219,15 @@ export default class Scanner {
     while (true) {
       if (this.blocksLength() === 0 && this.transactionsLength() === 0) {
         const t2 = process.hrtime(t1)
-        const diff = (t2[0] * 1e9 + t2[1]) / 1e6
+        const ms = parseInt((t2[0] * 1e9 + t2[1]) / 1e6)
+        const sec = parseInt(ms / 1000)
+
         console.log(
           `
-  Download Queue is empty. Time ${diff}ms (B+T/sec: ${totalBlocks +
-            totalTransactions /
-              diff *
-              1000}) Total blocks/trans: ${totalBlocks}/${totalTransactions}
+  Download Queue is empty. Time ${sec} sec. (B+T/sec: ${(totalBlocks +
+            totalTransactions) /
+            ms *
+            1000}) Total blocks/trans: ${totalBlocks}/${totalTransactions}
           `
         )
         break
@@ -221,10 +244,6 @@ export default class Scanner {
         await sleep(1000)
         continue
       }
-
-      console.log(
-        `DownloadQueue length => blocks: ${this.blocksLength()}, transactions: ${this.transactionsLength()}`
-      )
 
       let nextBlocks: Array<Promise<any>> = []
       let nextTransactions: Array<Promise<any>> = []
@@ -243,13 +262,42 @@ export default class Scanner {
         break
       }
 
-      const combinedItems: Array<Promise<Block | Transaction>> = [
+      nextBlocks.forEach((block) => {
+        block.then((item) => {
+          // Block
+          if (item.block === null) {
+            // Error while downloading. Lets try again
+            this.addBlock(item.blockNumber)
+            return
+          }
+          // Nice block - add to db processing queue
+          this.sync.addBlock(item.block)
+          this.blocksDownloaded += 1
+          totalBlocks += 1
+        })
+      })
+
+      nextTransactions.forEach((transaction) => {
+        transaction.then((item) => {
+          if (item.transaction === null) {
+            // Error while downloading. Lets try again
+            this.addTransaction(item.transactionHash)
+            return
+          }
+          // Nice transaction - add to db processing queue
+          this.sync.addTransaction(item.transaction)
+          this.transactionsDownloaded += 1
+          totalTransactions += 1
+        })
+      })
+
+      /*const combinedItems: Array<Promise<Block | Transaction>> = [
         ...nextBlocks,
         ...nextTransactions
-      ]
+      ]*/
 
-      const items = await Promise.all(combinedItems)
-
+      //const items = await Promise.all(combinedItems)
+      /*
       items.forEach((item) => {
         if (item.type === 'b') {
           // Block
@@ -260,6 +308,7 @@ export default class Scanner {
           }
           // Nice block - add to db processing queue
           this.sync.addBlock(item.block)
+          this.blocksDownloaded += 1
           totalBlocks += 1
         } else {
           if (item.transaction === null) {
@@ -269,9 +318,11 @@ export default class Scanner {
           }
           // Nice transaction - add to db processing queue
           this.sync.addTransaction(item.transaction)
+          this.transactionsDownloaded += 1
           totalTransactions += 1
         }
       })
+      */
       await sleep(500)
     }
     this.downloadRunning = false
