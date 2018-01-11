@@ -7,9 +7,9 @@ import SyncQueue from './syncQueue'
 
 import { type Block, type BlockHeader, type Transaction } from './types'
 
-const maxFetchConnections = 1
-const maxDownloadQueueLength = 10
-const maxSyncQueueLength = 20
+const maxFetchConnections = 1000
+const maxDownloadQueueLength = 3000
+const maxSyncQueueLength = 10000
 
 type Response = {
   type: 'b' | 't',

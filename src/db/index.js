@@ -64,13 +64,16 @@ export default class DB {
     data: Array<Transaction>
   ): Promise<DBResult> => {
     try {
-      const result = await transactions.bulkCreate(data, {
+      //     const result = await transactions.bulkCreate(data, {
+      //       returning: false
+      //     })
+      return transactions.bulkCreate(data, {
         returning: false
       })
-      return { result: true, message: null, data: null }
+      //return { result: true, message: null, data: null }
     } catch (error) {
       const message = `BulkCreateTransaction error [TX: ${data
-        .map((item) => item.hash)
+        .map((item) => item.transaction_hash)
         .join(', ')}]: ${error.message} ${
         error.original ? error.original.message : ''
       }`

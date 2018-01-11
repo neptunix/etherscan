@@ -24,4 +24,5 @@ Added account caching...
   Blocks processing complete. Stopped on block 948186.  Time: 2.683333333333333 minutes. Download Speed: [62/175] Blocks/Transactions per second. Processed blocks: 10090 and transactions: 28364
   [Fetch connections: 400, Download Queue Length: 3000, Sync Queue Length: 10000]
 
-  
+  Blocks processing complete. Stopped on block 1002557.  Time: 7.05 minutes. Download Speed: [25/91] Blocks/Transactions per second. Processed blocks: 10854 and transactions: 38782
+  [Fetch connections: 1000, Download Queue Length: 3000, Sync Queue Length: 10000]

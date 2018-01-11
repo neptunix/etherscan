@@ -42,7 +42,7 @@ export default class SyncQueue {
   logger: Logger
   web3: Web3
   blocksQueue: Array<BlockData>
-  transactionsQueue: Array<TransactionData>
+  transactionsQueue: Object
   running: boolean
   maxConnections: number
   maxBulkItems: number
@@ -61,13 +61,13 @@ export default class SyncQueue {
     this.logger = logger
     this.web3 = web3
     this.blocksQueue = []
-    this.transactionsQueue = []
+    this.transactionsQueue = {}
     this.running = false
     this.maxConnections = 500
-    this.maxBulkItems = 1000
+    this.maxBulkItems = 100
     this.currentConnections = 0
     this.latestBlock = 0
-    this.maxBulkConnections = 2
+    this.maxBulkConnections = 20
 
     this.failedBlocks = 0
     this.failedTransactions = 0
@@ -111,7 +111,9 @@ export default class SyncQueue {
             .toString()}
            `
         )
-        await this.db.updateSettings({ latest_block: this.latestBlock })
+        await this.db.updateSettings({
+          latest_block: this.latestBlock
+        })
         break
       }
 
@@ -127,7 +129,7 @@ export default class SyncQueue {
       )
       try {
         let nextBlocks: Array<BlockData> = []
-
+        console.log('x1')
         if (
           this.currentConnections < this.maxBulkConnections &&
           this.blocksLength() > 0
@@ -155,6 +157,12 @@ export default class SyncQueue {
               if (maxBlock > this.latestBlock) {
                 this.latestBlock = maxBlock
               }
+
+              // Mark transactions with blocks
+              //nextBlocks.forEach((block) =>
+              //  this.transactionsSetBlock(block.block.number)
+              //)
+
               /*this.logger.log(
               `Bulk created ${nextBlocks.length} blocks. Latest: ${
                 this.latestBlock
@@ -165,9 +173,9 @@ export default class SyncQueue {
               this.logger.error(`sync bulkCreateBlocks error, ${error.message}`)
             })
         }
+        console.log('x2')
 
         let nextTransactions: Array<TransactionData> = []
-
         if (
           this.currentConnections < this.maxBulkConnections &&
           this.transactionsLength() > 0
@@ -177,7 +185,7 @@ export default class SyncQueue {
             i < Math.min(this.maxBulkItems, this.transactionsLength());
             i++
           ) {
-            const next = this.nextTransaction(this.latestBlock)
+            const next = this.nextTransaction()
             if (next) {
               // Process accounts
               if (next.to === -1) {
@@ -199,11 +207,14 @@ export default class SyncQueue {
               nextTransactions.push(next)
             }
           }
+          console.log('x3', nextTransactions.length)
+
           if (nextTransactions.length > 0) {
             this.currentConnections += 1
             this.dbhelper
               .bulkCreateTransactions(nextTransactions)
-              .then((result) => {
+              .then(() => {
+                console.log('x4')
                 this.currentConnections -= 1
                 this.totalTransactions += nextTransactions.length
                 this.logger.log(
@@ -215,8 +226,12 @@ export default class SyncQueue {
                   `sync bulkCreateTransactions error, ${error.message}`
                 )
               })
+            console.log('x5')
           }
+          console.log('x6')
         }
+        console.log('x6')
+
         /*
       let nextBlocks: Array<Promise<CreateBlockResult>> = []
       let nextTransactions: Array<Promise<CreateTransactionResult>> = []
@@ -337,7 +352,7 @@ export default class SyncQueue {
         this.logger.error('Promise processBlocks error', err)
       }
 
-      await sleep(500)
+      await sleep(50)
     }
     this.running = false
   }
@@ -349,7 +364,7 @@ export default class SyncQueue {
   }
 
   blocksLength = () => this.blocksQueue.length
-  transactionsLength = () => this.transactionsQueue.length
+  transactionsLength = () => Object.keys(this.transactionsQueue).length
 
   addBlock = (block: Block) => {
     if (block !== null) {
@@ -374,39 +389,64 @@ export default class SyncQueue {
   addTransaction = (transaction: Transaction) => {
     if (transaction !== null) {
       //this.logger.debug(`SyncQueue: Adding transaction ${transaction.hash}`)
-      this.transactionsQueue.push({
+      this.transactionsQueue[transaction.hash] = {
         type: 't',
         transaction,
-        blockNumber: transaction.blockNumber,
+        blockNumber: transaction.blockNumber, //0,
         from: -1,
         to: -1,
         retryCount: 0
-      })
+      }
       this.checkRunning()
     }
   }
 
   addTransactionData = (transactionData: TransactionData) => {
     if (transactionData !== null) {
-      this.transactionsQueue.push(transactionData)
+      this.transactionsQueue[transactionData.transaction.hash] = transactionData
       this.checkRunning()
     }
   }
 
   hasBlock = (id: number) => !!this.blocksQueue.find((b) => b.block.id === id)
-  hasTransaction = (hash: string) =>
-    !!this.transactionsQueue.find((t) => t.transaction.hash === hash)
+  hasTransaction = (hash: string) => !!this.transactionsQueue[hash]
+  //!!this.transactionsQueue.find((t) => t.transaction.hash === hash)
 
   nextBlock = (): BlockData | null =>
     this.blocksLength() > 0 ? this.blocksQueue.shift() : null
-  nextTransaction = (blockNumber: number): TransactionData | null => {
+  nextTransaction = (): TransactionData | null => {
     if (this.transactionsLength() === 0) {
       return null
     }
-    const next = this.transactionsQueue.find(
-      (t) => t.blockNumber <= blockNumber
-    )
+    //$FlowFixMe
+    //const arr: Array < TransactionData > = Object.values(this.transactionsQueue)
+
+    //const next = arr.find((t) => t.blockNumber > 0)
+
+    const keys: Array<string> = Object.keys(this.transactionsQueue)
+    const next = this.transactionsQueue[keys[0]]
+    delete this.transactionsQueue[keys[0]]
     return !!next ? next : null
+  }
+
+  transactionsSetBlock = (block: number) => {
+    if (this.transactionsLength === 0) {
+      return
+    }
+    const trs = Object.keys(this.transactionsQueue)
+    trs.forEach((tr) => {
+      let item = this.transactionsQueue[tr]
+      if (item.transaction.blockNumber === block) {
+        item.blockNumber = block
+      }
+    })
+  }
+
+  transactionSetBlock = (hash: string, block: number) => {
+    if (!this.hasTransaction(hash)) {
+      return
+    }
+    this.transactionsQueue[hash].blockNumber = block
   }
 
   accountToNum = (hash: string | null) => {
@@ -442,15 +482,15 @@ class DbHelper {
           transactions: blockData.block.transactions.length
         }
       })
-      const createResult = await this.db.bulkCreateBlocks(blockData)
-      if (!createResult.result) {
-        this.logger.error(
-          `bulkCreateBlocks error ${
-            createResult.message ? createResult.message : ''
-          }`
-        )
-      }
-      return createResult
+      this.db.bulkCreateBlocks(blockData).then((createResult) => {
+        if (!createResult.result) {
+          this.logger.error(
+            `bulkCreateBlocks error ${
+              createResult.message ? createResult.message : ''
+            }`
+          )
+        }
+      })
     } catch (error) {
       this.logger.error(`bulkCreateBlocks error ${error.message}`)
     }
@@ -459,6 +499,7 @@ class DbHelper {
   bulkCreateTransactions = async (transactions: Array<TransactionData>) => {
     try {
       // { transaction_hash, from_account, to_account, block_id, wei },
+      console.log('y1')
       const transactionData = transactions.map((transactionData) => {
         return {
           transaction_hash: this.web3.utils.hexToNumberString(
@@ -470,15 +511,18 @@ class DbHelper {
           wei: transactionData.transaction.value
         }
       })
-      const createResult = await this.db.bulkCreateTransactions(transactionData)
-      if (!createResult.result) {
-        this.logger.error(
-          `bulkCreateTransactions error ${
-            createResult.message ? createResult.message : ''
-          }`
-        )
-        return createResult
-      }
+      console.log('y2')
+      this.db.bulkCreateTransactions(transactionData).then((createResult) => {
+        /*console.log('y3')
+        if (!createResult.result) {
+          this.logger.error(
+            `bulkCreateTransactions error ${
+              createResult.message ? createResult.message : ''
+            }`
+          )
+        }*/
+      })
+      console.log('y3')
     } catch (error) {
       this.logger.error(`bulkCreateTransactions error ${error.message}`)
     }
