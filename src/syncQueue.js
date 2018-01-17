@@ -49,6 +49,7 @@ export default class SyncQueue {
   web3: Web3
   blocksQueue: Array<BlockData>
   transactionsQueue: Object
+  blocksCreated: Object
   running: boolean
   maxConnections: number
   maxBulkItems: number
@@ -68,9 +69,10 @@ export default class SyncQueue {
     this.web3 = web3
     this.blocksQueue = []
     this.transactionsQueue = {}
+    this.blocksCreated = {}
     this.running = false
     this.maxConnections = 100
-    this.maxBulkItems = 200
+    this.maxBulkItems = 100
     this.currentConnections = 0
     this.latestBlock = 0
     this.maxBulkConnections = 20
@@ -165,9 +167,9 @@ export default class SyncQueue {
               }
 
               // Mark transactions with blocks
-              //nextBlocks.forEach((block) =>
-              //  this.transactionsSetBlock(block.block.number)
-              //)
+              nextBlocks.forEach((block) =>
+                this.addBlockCreated(block.block.number)
+              )
 
               /*this.logger.log(
               `Bulk created ${nextBlocks.length} blocks. Latest: ${
@@ -423,6 +425,14 @@ export default class SyncQueue {
   hasTransaction = (hash: string) => !!this.transactionsQueue[hash]
   //!!this.transactionsQueue.find((t) => t.transaction.hash === hash)
 
+  blockWasCreated = (id: number) => !!this.blocksCreated[id]
+  addBlockCreated = (id: number) => {
+    if (!this.blockWasCreated) {
+      this.blocksCreated[id] = { blockNumber: id, timestamp: new Date() }
+    }
+  }
+  // TODO: Remove stale blocks from memory!
+
   nextBlock = (): BlockData | null =>
     this.blocksLength() > 0 ? this.blocksQueue.shift() : null
   nextTransaction = (): TransactionData | null => {
@@ -435,8 +445,22 @@ export default class SyncQueue {
     //const next = arr.find((t) => t.blockNumber > 0)
 
     const keys: Array<string> = Object.keys(this.transactionsQueue)
-    const next = this.transactionsQueue[keys[0]]
-    delete this.transactionsQueue[keys[0]]
+    let next = null
+    for (let i = 0; i < keys.length; i++) {
+      next = this.transactionsQueue[keys[i]]
+      if (!this.blockWasCreated(next.blockNumber)) {
+        // Block has not been created in DB yet
+        continue
+      }
+      delete this.transactionsQueue[keys[i]]
+      break
+    }
+    if (next === null) {
+      return null
+    }
+
+    //const next = this.transactionsQueue[keys[0]]
+    //delete this.transactionsQueue[keys[0]]
     return !!next ? next : null
   }
 
