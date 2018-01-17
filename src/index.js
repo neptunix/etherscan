@@ -2,7 +2,8 @@
 import DB from './db'
 import Scanner from './scanner'
 
-const rpcApi = 'https://mainnet.infura.io/Oxgvoj8dFruRa6YCekfU' // Mainnet
+//const rpcApi = 'https://mainnet.infura.io/Oxgvoj8dFruRa6YCekfU' // Mainnet
+const rpcApi = 'http://localhost:9545/'
 
 async function run() {
   const scanner = new Scanner(rpcApi, 4)
@@ -21,7 +22,7 @@ async function run() {
   //await scanner.runSync(1000)
   //checkTransactionCount(145011, 145012)
 
-  await scanner.runSync(10000)
+  await scanner.runSync(0)
 }
 
 run()

@@ -39,3 +39,20 @@ export interface Transaction {
   r?: string;
   s?: string;
 }
+
+export interface TransactionReceipt {
+  transactionHash: string
+  transactionIndex: number
+  blockHash: string
+  blockNumber: number
+  from: string
+  to: string
+  contractAddress: string
+  cumulativeGasUsed: number
+  gasUsed: number
+  logs?: Array<Log>
+  events?: {
+    [eventName: string]: EventLog
+  },
+  status: string
+}

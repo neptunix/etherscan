@@ -1,7 +1,12 @@
 // @flow
 
 import Web3 from 'web3'
-import { type Block, type BlockHeader, type Transaction } from './types'
+import {
+  type Block,
+  type BlockHeader,
+  type Transaction,
+  type TransactionReceipt
+} from './types'
 import { sleep } from './utils'
 import DB from './db'
 import AccountsHelper from './db/accountsHelper'
@@ -14,6 +19,7 @@ type TransactionData = {
   blockNumber: number,
   from: number,
   to: number,
+  receipt: TransactionReceipt,
   retryCount: number
 }
 
@@ -63,8 +69,8 @@ export default class SyncQueue {
     this.blocksQueue = []
     this.transactionsQueue = {}
     this.running = false
-    this.maxConnections = 500
-    this.maxBulkItems = 100
+    this.maxConnections = 100
+    this.maxBulkItems = 200
     this.currentConnections = 0
     this.latestBlock = 0
     this.maxBulkConnections = 20
@@ -129,7 +135,7 @@ export default class SyncQueue {
       )
       try {
         let nextBlocks: Array<BlockData> = []
-        console.log('x1')
+        //        console.log('x1')
         if (
           this.currentConnections < this.maxBulkConnections &&
           this.blocksLength() > 0
@@ -173,7 +179,7 @@ export default class SyncQueue {
               this.logger.error(`sync bulkCreateBlocks error, ${error.message}`)
             })
         }
-        console.log('x2')
+        //        console.log('x2')
 
         let nextTransactions: Array<TransactionData> = []
         if (
@@ -189,7 +195,11 @@ export default class SyncQueue {
             if (next) {
               // Process accounts
               if (next.to === -1) {
-                const toNum = this.accountToNum(next.transaction.to)
+                const toNum = this.accountToNum(
+                  next.transaction.to === null
+                    ? next.receipt.contractAddress
+                    : next.transaction.to
+                )
                 let to = this.accountsHelper.get(toNum)
                 if (!to) {
                   to = await this.dbhelper.createAccount(toNum)
@@ -207,7 +217,7 @@ export default class SyncQueue {
               nextTransactions.push(next)
             }
           }
-          console.log('x3', nextTransactions.length)
+          //          console.log('x3', nextTransactions.length)
 
           if (nextTransactions.length > 0) {
             this.currentConnections += 1
@@ -226,11 +236,11 @@ export default class SyncQueue {
                   `sync bulkCreateTransactions error, ${error.message}`
                 )
               })
-            console.log('x5')
+            //            console.log('x5')
           }
-          console.log('x6')
+          //          console.log('x6')
         }
-        console.log('x6')
+        //        console.log('x6')
 
         /*
       let nextBlocks: Array<Promise<CreateBlockResult>> = []
@@ -352,7 +362,7 @@ export default class SyncQueue {
         this.logger.error('Promise processBlocks error', err)
       }
 
-      await sleep(50)
+      await sleep(500)
     }
     this.running = false
   }
@@ -386,7 +396,7 @@ export default class SyncQueue {
     }
   }
 
-  addTransaction = (transaction: Transaction) => {
+  addTransaction = (transaction: Transaction, receipt: TransactionReceipt) => {
     if (transaction !== null) {
       //this.logger.debug(`SyncQueue: Adding transaction ${transaction.hash}`)
       this.transactionsQueue[transaction.hash] = {
@@ -395,6 +405,7 @@ export default class SyncQueue {
         blockNumber: transaction.blockNumber, //0,
         from: -1,
         to: -1,
+        receipt,
         retryCount: 0
       }
       this.checkRunning()
@@ -449,11 +460,7 @@ export default class SyncQueue {
     this.transactionsQueue[hash].blockNumber = block
   }
 
-  accountToNum = (hash: string | null) => {
-    if (hash === null) {
-      hash = '0x00'
-    }
-    // transaction.to is null for Smart Contract creation. TODO: should call getTransactionReceipt to get contract hash
+  accountToNum = (hash: string) => {
     return this.web3.utils.hexToNumberString(hash)
   }
 }
@@ -508,6 +515,9 @@ class DbHelper {
           from_account: transactionData.from,
           to_account: transactionData.to,
           block_id: transactionData.blockNumber,
+          gas_limit: transactionData.transaction.gas,
+          gas_used: transactionData.receipt.gasUsed,
+          tx_status: transactionData.receipt.status,
           wei: transactionData.transaction.value
         }
       })
@@ -595,7 +605,7 @@ class DbHelper {
 
     const toId = this.accountsHelper.get(
       transactionData.transaction.to === null
-        ? '0x00'
+        ? transactionData.receipt.contractAddress
         : transactionData.transaction.to
     )
     if (toId) {
@@ -606,7 +616,7 @@ class DbHelper {
         const toResult = await this.db.createAccount(
           this.web3.utils.hexToNumberString(
             transactionData.transaction.to === null
-              ? '0x00' // transaction.to is null for Smart Contract creation. TODO: should call getTransactionReceipt to get contract hash
+              ? transactionData.receipt.contractAddress
               : transactionData.transaction.to
           )
         )
@@ -622,7 +632,7 @@ class DbHelper {
           to = toResult.data.id
           this.accountsHelper.set(
             transactionData.transaction.to === null
-              ? '0x00'
+              ? transactionData.receipt.contractAddress
               : transactionData.transaction.to,
             to
           )
@@ -650,6 +660,7 @@ class DbHelper {
             transaction: transactionData.transaction,
             from: from,
             to: to,
+            receipt: transactionData.receipt,
             retryCount: transactionData.retryCount + 1
           }
     }

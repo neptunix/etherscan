@@ -10,10 +10,12 @@ const env = process.env.NODE_ENV || 'development'
 const db = {}
 const config = {
   username: 'postgres',
-  password: 'etherscan-etherscan-etherscan',
+  //  password: 'etherscan-etherscan-etherscan',
+  password: 'etherscan',
   database: 'etherscan',
   host: '127.0.0.1',
-  port: 18401,
+  //  port: 18401,
+  port: 19401,
   dialect: 'postgres',
   operatorsAliases: Op,
   logging: false,

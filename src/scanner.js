@@ -7,9 +7,9 @@ import SyncQueue from './syncQueue'
 
 import { type Block, type BlockHeader, type Transaction } from './types'
 
-const maxFetchConnections = 1000
-const maxDownloadQueueLength = 3000
-const maxSyncQueueLength = 10000
+const maxFetchConnections = 50
+const maxDownloadQueueLength = 100
+const maxSyncQueueLength = 200
 
 type Response = {
   type: 'b' | 't',
@@ -78,6 +78,8 @@ export default class Scanner {
     }
   }
 
+  latestBlockNumber = () => this.web3.eth.getBlockNumber()
+
   getBlock = async (block: number): Promise<Response> => {
     try {
       //this.logger.debug(`Fetching Block ${block}`)
@@ -108,40 +110,77 @@ export default class Scanner {
       //this.logger.debug(`Fetching Transaction ${hash}`)
       this.currentConnections += 1
       const transactionResult = await this.web3.eth.getTransaction(hash)
+      const transactionReceipt = await this.web3.eth.getTransactionReceipt(hash)
       //this.logger.debug(`Transaction received`, transactionResult)
       this.currentConnections -= 1
-      if (!transactionResult) {
+      if (!transactionResult || !transactionReceipt) {
         this.logger.warn(
           `Scanner[getTransaction] [${hash}]: received empty transaction data`
         )
-        return { type: 't', transaction: null, transactionHash: hash }
+        return {
+          type: 't',
+          transaction: null,
+          receipt: null,
+          transactionHash: hash
+        }
       }
       return {
         type: 't',
         transaction: transactionResult,
+        receipt: transactionReceipt,
         transactionHash: hash
       }
     } catch (err) {
       //this.logger.warn(`Scanner[getTransaction] [${hash}]`, err.message)
       this.currentConnections -= 1
-      return { type: 't', transaction: null, transactionHash: hash }
+      return {
+        type: 't',
+        transaction: null,
+        receipt: null,
+        transactionHash: hash
+      }
     }
   }
 
   runSync = async (nextBlocks: number) => {
-    const latestBlock = this.db.getLatestBlock()
+    const isLive = nextBlocks === 0
+
+    let latestBlock = this.db.getLatestBlock()
+    let latestBlockChainBlock = await this.latestBlockNumber()
+    let latestBlockToSync = isLive
+      ? latestBlockChainBlock
+      : latestBlock + nextBlocks
+
     this.blocksDownloaded = 0
     this.transactionsDownloaded = 0
     const t1 = process.hrtime()
 
-    this.logger.log(
-      `Starting blocks sync for next ${nextBlocks} blocks. Latest block ${latestBlock}`
-    )
+    if (isLive) {
+      this.logger.log(
+        `Starting live sync. Our latest block is ${latestBlock}. Blockchain Latest block is ${latestBlockToSync}`
+      )
+    } else {
+      this.logger.log(
+        `Starting blocks sync for next ${nextBlocks} blocks. Current latest block ${latestBlock}`
+      )
+    }
+
+    if (latestBlockToSync > latestBlockChainBlock) {
+      this.logger.log(
+        `Blockchain latest block ${latestBlockChainBlock} is less than required number of blocks to sync (Next ${nextBlocks}). Stopping`
+      )
+      return
+    }
 
     let currentBlock = latestBlock + 1
     let isStopping = false
 
     while (true) {
+      if (isLive) {
+        latestBlockChainBlock = await this.latestBlockNumber()
+        latestBlockToSync = latestBlockChainBlock
+      }
+
       const t2 = process.hrtime(t1)
       const ms = parseInt((t2[0] * 1e9 + t2[1]) / 1e6)
       const sec = parseInt(ms / 1000)
@@ -153,11 +192,11 @@ export default class Scanner {
         this.logger.debug(
           `Download queue\t=> Speed: [${blPerSec}/${trPerSec}], Blocks: ${this.blocksLength()}, Transactions: ${this.transactionsLength()}, Connections: ${
             this.currentConnections
-          }, Left blocks: ${latestBlock + nextBlocks - currentBlock}`
+          }, Left blocks: ${latestBlockToSync - currentBlock}`
         )
       }
 
-      if (currentBlock >= latestBlock + nextBlocks) {
+      if (!isLive && currentBlock >= latestBlockToSync) {
         if (isStopping === false) {
           this.logger.log(
             `Scanner loop stopping... Waiting for sync queue to empty: Blocks/Transactions: [${this.sync.blocksLength()} / ${this.sync.transactionsLength()}]`
@@ -187,7 +226,7 @@ export default class Scanner {
 
       const addToQueue = Math.min(
         maxDownloadQueueLength,
-        currentBlock + nextBlocks
+        latestBlockToSync - currentBlock
       )
       const currentTasks = this.blocksLength() + this.transactionsLength()
       if (currentTasks < addToQueue) {
@@ -195,7 +234,11 @@ export default class Scanner {
           this.addBlock(currentBlock++)
         }
       }
-      await sleep(1000)
+      if (isLive) {
+        await sleep(10000)
+      } else {
+        await sleep(1000)
+      }
     }
   }
 
@@ -217,7 +260,7 @@ export default class Scanner {
     let totalTransactions = 0
 
     while (true) {
-      if (this.blocksLength() === 0 && this.transactionsLength() === 0) {
+      if (this.blocksLength() <= 0 && this.transactionsLength() <= 0) {
         const t2 = process.hrtime(t1)
         const ms = parseInt((t2[0] * 1e9 + t2[1]) / 1e6)
         const sec = parseInt(ms / 1000)
@@ -285,7 +328,7 @@ export default class Scanner {
             return
           }
           // Nice transaction - add to db processing queue
-          this.sync.addTransaction(item.transaction)
+          this.sync.addTransaction(item.transaction, item.receipt)
           this.transactionsDownloaded += 1
           totalTransactions += 1
         })

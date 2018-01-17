@@ -8,6 +8,7 @@ CREATE TABLE accounts
 (
     id bigint NOT NULL DEFAULT nextval('accounts_id_seq'),
     account numeric(50,0) NOT NULL,
+    is_contract boolean NOT NULL DEFAULT(false),
     CONSTRAINT accounts_pk PRIMARY KEY (id)
 );
 ALTER SEQUENCE accounts_id_seq OWNED BY accounts.id;
@@ -31,6 +32,9 @@ CREATE TABLE transactions
     from_account bigint NOT NULL,
     to_account bigint NOT NULL,
     block_id int NOT NULL,
+    gas_limit int NOT NULL,
+    gas_used int NOT NULL,
+    tx_status boolean NOT NULL DEFAULT(true),
     wei numeric (24,0) NOT NULL,
     CONSTRAINT transactions_pk PRIMARY KEY (id)
 );

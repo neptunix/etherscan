@@ -14,6 +14,11 @@ export default (sequelize: Sequelize, DataTypes) => {
       account: {
         type: DataTypes.DOUBLE,
         allowNull: false
+      },
+      is_contract: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false
       }
     },
     {
