@@ -7,9 +7,9 @@ import SyncQueue from './syncQueue'
 
 import { type Block, type BlockHeader, type Transaction } from './types'
 
-const maxFetchConnections = 50
-const maxDownloadQueueLength = 100
-const maxSyncQueueLength = 200
+const maxFetchConnections = 400
+const maxDownloadQueueLength = 5000
+const maxSyncQueueLength = 10000
 
 type Response = {
   type: 'b' | 't',
@@ -235,7 +235,7 @@ export default class Scanner {
         }
       }
       if (isLive) {
-        await sleep(10000)
+        await sleep(2000)
       } else {
         await sleep(1000)
       }

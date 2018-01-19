@@ -1,3 +1,5 @@
+--DROP DATABASE "etherscan";
+
 -- Created by Vertabelo (http://vertabelo.com)
 -- Last modification date: 2018-01-04 15:32:07.811
 

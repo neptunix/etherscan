@@ -135,6 +135,10 @@ export default class SyncQueue {
           this.currentConnections
         }, Accounts cache: ${this.dbhelper.accountsHelperLength().toString()}`
       )
+
+      // console.log(
+      //   `Complete blocks: [${Object.keys(this.blocksCreated).join(', ')}]`
+      // )
       try {
         let nextBlocks: Array<BlockData> = []
         //        console.log('x1')
@@ -226,7 +230,7 @@ export default class SyncQueue {
             this.dbhelper
               .bulkCreateTransactions(nextTransactions)
               .then(() => {
-                console.log('x4')
+                //console.log('x4 bulkCreateTransactions complete')
                 this.currentConnections -= 1
                 this.totalTransactions += nextTransactions.length
                 this.logger.log(
@@ -364,7 +368,7 @@ export default class SyncQueue {
         this.logger.error('Promise processBlocks error', err)
       }
 
-      await sleep(500)
+      await sleep(200)
     }
     this.running = false
   }
@@ -400,6 +404,11 @@ export default class SyncQueue {
 
   addTransaction = (transaction: Transaction, receipt: TransactionReceipt) => {
     if (transaction !== null) {
+      console.log(
+        `Adding transaction to transactionsQueue: ${transaction.blockNumber} (${
+          transaction.hash
+        })`
+      )
       //this.logger.debug(`SyncQueue: Adding transaction ${transaction.hash}`)
       this.transactionsQueue[transaction.hash] = {
         type: 't',
@@ -427,7 +436,7 @@ export default class SyncQueue {
 
   blockWasCreated = (id: number) => !!this.blocksCreated[id]
   addBlockCreated = (id: number) => {
-    if (!this.blockWasCreated) {
+    if (!this.blockWasCreated(id)) {
       this.blocksCreated[id] = { blockNumber: id, timestamp: new Date() }
     }
   }
@@ -446,17 +455,37 @@ export default class SyncQueue {
 
     const keys: Array<string> = Object.keys(this.transactionsQueue)
     let next = null
+    console.log(
+      `getting nextTransaction. Current: [${Object.keys(this.transactionsQueue)
+        .map((x) => this.transactionsQueue[x].blockNumber)
+        .join(', ')}]`
+    )
     for (let i = 0; i < keys.length; i++) {
       next = this.transactionsQueue[keys[i]]
+      console.log(
+        `  checking block ${
+          next.blockNumber
+        }. Was created: ${this.blockWasCreated(
+          next.blockNumber
+        )}. Blocks: [${Object.keys(this.blocksCreated).join(', ')}]`
+      )
       if (!this.blockWasCreated(next.blockNumber)) {
+        //console.log(`blockWasCreated: false ${next.blockNumber}`)
         // Block has not been created in DB yet
+        next = null
         continue
+      } else {
+        //console.log(`blockWasCreated: true ${next.blockNumber}`)
       }
       delete this.transactionsQueue[keys[i]]
+      console.log(
+        `Removed transaction ${next.blockNumber} (${
+          next.transaction.hash
+        }) from transactionsQueue. Left: [${Object.keys(this.transactionsQueue)
+          .map((x) => this.transactionsQueue[x].blockNumber)
+          .join(', ')}]`
+      )
       break
-    }
-    if (next === null) {
-      return null
     }
 
     //const next = this.transactionsQueue[keys[0]]
@@ -505,7 +534,12 @@ class DbHelper {
   accountsHelperLength = () => this.accountsHelper.length()
 
   bulkCreateBlocks = async (blocks: Array<BlockData>) => {
-    try {
+    return new Promise((resolve, reject) => {
+      // console.log(
+      //   `bulkCreateBlocks ${blocks.length} start [` +
+      //     blocks.map((t) => t.block.number).join(', ') +
+      //     ']'
+      // )
       const blockData = blocks.map((blockData) => {
         return {
           id: blockData.block.number,
@@ -515,22 +549,55 @@ class DbHelper {
       })
       this.db.bulkCreateBlocks(blockData).then((createResult) => {
         if (!createResult.result) {
-          this.logger.error(
+          reject(
             `bulkCreateBlocks error ${
               createResult.message ? createResult.message : ''
             }`
           )
         }
+        // console.log(
+        //   `bulkCreateBlocks ${blocks.length} stop [` +
+        //     blocks.map((t) => t.block.number).join(', ') +
+        //     ']'
+        // )
+        resolve(createResult)
       })
-    } catch (error) {
-      this.logger.error(`bulkCreateBlocks error ${error.message}`)
-    }
+      // .catch((error) => {
+      //   reject(`bulkCreateBlocks error ${error.message}`)
+      // })
+    })
   }
 
   bulkCreateTransactions = async (transactions: Array<TransactionData>) => {
-    try {
-      // { transaction_hash, from_account, to_account, block_id, wei },
-      console.log('y1')
+    // return new Promise((resolve, reject) => {
+    //   const blockData = blocks.map((blockData) => {
+    //     return {
+    //       id: blockData.block.number,
+    //       date: new Date(blockData.block.timestamp * 1000),
+    //       transactions: blockData.block.transactions.length
+    //     }
+    //   })
+    //   this.db.bulkCreateBlocks(blockData).then((createResult) => {
+    //     if (!createResult.result) {
+    //       reject(
+    //         `bulkCreateBlocks error ${
+    //           createResult.message ? createResult.message : ''
+    //         }`
+    //       )
+    //     }
+    //     resolve(createResult)
+    //   })
+    // })
+
+    // { transaction_hash, from_account, to_account, block_id, wei },
+    return new Promise((resolve, reject) => {
+      console.log(
+        'bulkCreateTransactions 567 [' +
+          transactions
+            .map((t) => `${t.blockNumber} => ${t.transaction.hash}`)
+            .join(', ') +
+          ']'
+      )
       const transactionData = transactions.map((transactionData) => {
         return {
           transaction_hash: this.web3.utils.hexToNumberString(
@@ -545,21 +612,26 @@ class DbHelper {
           wei: transactionData.transaction.value
         }
       })
-      console.log('y2')
       this.db.bulkCreateTransactions(transactionData).then((createResult) => {
-        /*console.log('y3')
         if (!createResult.result) {
-          this.logger.error(
+          reject(
             `bulkCreateTransactions error ${
               createResult.message ? createResult.message : ''
             }`
           )
-        }*/
+        }
+        resolve(createResult)
       })
-      console.log('y3')
-    } catch (error) {
-      this.logger.error(`bulkCreateTransactions error ${error.message}`)
-    }
+      // .catch((error) => {
+      //   console.error(
+      //     `bulkCreateTransactions 1 error: ${error.message} ${
+      //       error.original
+      //         ? error.original.message + ' ' + error.original.sql
+      //         : ''
+      //     } `
+      //   )
+      // })
+    })
   }
 
   createAccount = async (accountNum): Promise<number> => {
